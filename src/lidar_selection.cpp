@@ -602,7 +602,7 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
 {
     int total_points = sub_sparse_map->index.size();
     if (total_points==0) return 0.;
-    StatesGroup old_state = (*state);
+    StatesGroup old_state = (*state_);
     V2D pc; 
     MD(1,2) Jimg;
     MD(2,3) Jdpi;
@@ -635,8 +635,8 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
         error = 0.0;
         propa_error = 0.0;
         n_meas_ =0;
-        M3D Rwi(state->rot_end);
-        V3D Pwi(state->pos_end);
+        M3D Rwi(state_->rot_end);
+        V3D Pwi(state_->pos_end);
         Rcw = Rci * Rwi.transpose();
         Pcw = -Rci*Rwi.transpose()*Pwi + Pci;
         Jdp_dt = Rci * Rwi.transpose();
@@ -718,23 +718,23 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
 
         if (error <= last_error) 
         {
-            old_state = (*state);
+            old_state = (*state_);
             last_error = error;
 
-            // K = (H.transpose() / img_point_cov * H + state->cov.inverse()).inverse() * H.transpose() / img_point_cov;
-            // auto vec = (*state_propagat) - (*state);
+            // K = (H.transpose() / img_point_cov * H + state_->cov.inverse()).inverse() * H.transpose() / img_point_cov;
+            // auto vec = (*state_propagat) - (*state_);
             // G = K*H;
-            // (*state) += (-K*z + vec - G*vec);
+            // (*state_) += (-K*z + vec - G*vec);
 
             auto &&H_sub_T = H_sub.transpose();
             H_T_H.block<6,6>(0,0) = H_sub_T * H_sub;
-            MD(DIM_STATE, DIM_STATE) &&K_1 = (H_T_H + (state->cov / img_point_cov).inverse()).inverse();
+            MD(DIM_STATE, DIM_STATE) &&K_1 = (H_T_H + (state_->cov / img_point_cov).inverse()).inverse();
             auto &&HTz = H_sub_T * z;
             // K = K_1.block<DIM_STATE,6>(0,0) * H_sub_T;
-            auto vec = (*state_propagat) - (*state);
+            auto vec = (*state_propagat) - (*state_);
             G.block<DIM_STATE,6>(0,0) = K_1.block<DIM_STATE,6>(0,0) * H_T_H.block<6,6>(0,0);
             auto solution = - K_1.block<DIM_STATE,6>(0,0) * HTz + vec - G.block<DIM_STATE,6>(0,0) * vec.block<6,1>(0,0);
-            (*state) += solution;
+            (*state_) += solution;
             auto &&rot_add = solution.block<3,1>(0,0);
             auto &&t_add   = solution.block<3,1>(3,0);
 
@@ -745,7 +745,7 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
         }
         else
         {
-            (*state) = old_state;
+            (*state_) = old_state;
             EKF_end = true;
         }
 
@@ -759,10 +759,10 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
     return last_error;
 } 
 
-void LidarSelector::updateFrameState(StatesGroup state)
+void LidarSelector::updateFrameState(StatesGroup state_)
 {
-    M3D Rwi(state.rot_end);
-    V3D Pwi(state.pos_end);
+    M3D Rwi(state_.rot_end);
+    V3D Pwi(state_.pos_end);
     Rcw = Rci * Rwi.transpose();
     Pcw = -Rci*Rwi.transpose()*Pwi + Pci;
     new_frame_->T_f_w_ = SE3(Rcw, Pcw);
@@ -840,9 +840,9 @@ void LidarSelector::ComputeJ(cv::Mat img)
     }
     if (now_error < error)
     {
-        state->cov -= G*state->cov;
+        state_->cov -= G*state_->cov;
     }
-    updateFrameState(*state);
+    updateFrameState(*state_);
 }
 
 void LidarSelector::display_keypatch(double time)
@@ -900,7 +900,7 @@ void LidarSelector::detect(cv::Mat img, PointCloudXYZI::Ptr pg)
     cv::cvtColor(img,img,CV_BGR2GRAY);
 
     new_frame_.reset(new Frame(cam, img.clone()));
-    updateFrameState(*state);
+    updateFrameState(*state_);
 
     if(stage_ == STAGE_FIRST_FRAME && pg->size()>10)
     {

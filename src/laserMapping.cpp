@@ -893,7 +893,7 @@ int main(int argc, char** argv)
     lidar_selector->ncc_thre = ncc_thre;
     lidar_selector->sparse_map->set_camera2lidar(cameraextrinR, cameraextrinT);
     lidar_selector->set_extrinsic(Lidar_offset_to_IMU, Lidar_rot_to_IMU);
-    lidar_selector->state = &state;
+    lidar_selector->state_ = &state;
     lidar_selector->state_propagat = &state_propagat;
     lidar_selector->NUM_MAX_ITERATIONS = NUM_MAX_ITERATIONS;
     lidar_selector->MIN_IMG_COUNT = MIN_IMG_COUNT;
