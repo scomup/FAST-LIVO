@@ -66,29 +66,15 @@
 #include <vikit/camera_loader.h>
 #include"lidar_selection.h"
 
-#ifdef USE_ikdtree
-    #ifdef USE_ikdforest
-    #include <ikd-Forest/ikd_Forest.h>
-    #else
-    #include <ikd-Tree/ikd_Tree.h>
-    #endif
-#else
-#include <pcl/kdtree/kdtree_flann.h>
-#endif
+#include <ikd-Tree/ikd_Tree.h>
+
 
 #define INIT_TIME           (0.5)
 #define MAXN                (360000)
 #define PUBFRAME_PERIOD     (20)
 
 float DET_RANGE = 300.0f;
-#ifdef USE_ikdforest
-    const int laserCloudWidth  = 200;
-    const int laserCloudHeight = 200;
-    const int laserCloudDepth  = 200;
-    const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;
-#else
-    const float MOV_THRESHOLD = 1.5f;
-#endif
+const float MOV_THRESHOLD = 1.5f;
 
 mutex mtx_buffer;
 condition_variable sig_buffer;
@@ -172,15 +158,8 @@ PointCloudXYZI::Ptr corr_normvect(new PointCloudXYZI());
 pcl::VoxelGrid<PointType> downSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
 
-#ifdef USE_ikdtree
-    #ifdef USE_ikdforest
-    KD_FOREST ikdforest;
-    #else
-    KD_TREE ikdtree;
-    #endif
-#else
-pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromMap(new pcl::KdTreeFLANN<PointType>());
-#endif
+KD_TREE ikdtree;
+
 
 V3F XAxisPoint_body(LIDAR_SP_LEN, 0.0, 0.0);
 V3F XAxisPoint_world(LIDAR_SP_LEN, 0.0, 0.0);
@@ -268,7 +247,6 @@ void RGBpointBodyToWorld(PointType const * const pi, PointType * const po)
     int reflection_map = intensity*10000;
 }
 
-#ifndef USE_ikdforest
 int points_cache_size = 0;
 void points_cache_collect()
 {
@@ -276,7 +254,6 @@ void points_cache_collect()
     ikdtree.acquire_removed_points(points_history);
     points_cache_size = points_history.size();
 }
-#endif
 
 BoxPointType get_cube_point(float center_x, float center_y, float center_z)
 {
@@ -305,7 +282,6 @@ BoxPointType get_cube_point(float xmin, float ymin, float zmin, float xmax, floa
     return cube_points;
 }
 
-#ifndef USE_ikdforest
 BoxPointType LocalMap_Points;
 bool Localmap_Initialized = false;
 void lasermap_fov_segment()
@@ -361,7 +337,6 @@ void lasermap_fov_segment()
     // printf("Delete time: %0.6f, delete size: %d\n",kdtree_delete_time,kdtree_delete_counter);
     // printf("Delete Box: %d\n",int(cub_needrm.size()));
 }
-#endif
 
 void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) 
 {
@@ -638,13 +613,7 @@ void map_incremental()
         /* transform to world frame */
         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
     }
-#ifdef USE_ikdtree
-    #ifdef USE_ikdforest
-    ikdforest.Add_Points(feats_down_world->points, lidar_end_time);
-    #else
     ikdtree.Add_Points(feats_down_world->points, true);
-    #endif
-#endif
 }
 
 // PointCloudXYZRGB::Ptr pcl_wait_pub_RGB(new PointCloudXYZRGB(500000, 1));
@@ -961,9 +930,6 @@ int main(int argc, char** argv)
     ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
             ("/path", 10);
 
-#ifdef DEPLOY
-    ros::Publisher mavros_pose_publisher = nh.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose/pose", 10);
-#endif
     
     path.header.stamp    = ros::Time::now();
     path.header.frame_id ="camera_init";
@@ -980,12 +946,6 @@ int main(int argc, char** argv)
 
     downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
     downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);
-    #ifdef USE_ikdforest
-        ikdforest.Set_balance_criterion_param(0.6);
-        ikdforest.Set_delete_criterion_param(0.5);
-        ikdforest.Set_environment(laserCloudDepth,laserCloudWidth,laserCloudHeight,cube_len);
-        ikdforest.Set_downsample_param(filter_size_map_min);    
-    #endif
 
     shared_ptr<ImuProcess> p_imu(new ImuProcess());
     Lidar_offset_to_IMU<<VEC_FROM_ARRAY(extrinT);
@@ -1036,10 +996,6 @@ int main(int argc, char** argv)
     // else
     //     cout << "~~~~"<<ROOT_DIR<<" doesn't exist" << endl;
 
-    #ifdef USE_ikdforest
-        ikdforest.Set_balance_criterion_param(0.6);
-        ikdforest.Set_delete_criterion_param(0.5);
-    #endif
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
@@ -1172,23 +1128,11 @@ int main(int argc, char** argv)
         }
 
         /*** Segment the map in lidar FOV ***/
-        #ifndef USE_ikdforest            
-            lasermap_fov_segment();
-        #endif
+        lasermap_fov_segment();
         /*** downsample the feature points in a scan ***/
         downSizeFilterSurf.setInputCloud(feats_undistort);
         downSizeFilterSurf.filter(*feats_down_body);
-    #ifdef USE_ikdtree
         /*** initialize the map kdtree ***/
-        #ifdef USE_ikdforest
-        if (!ikdforest.initialized){
-            if(feats_down_body->points.size() > 5){
-                ikdforest.Build(feats_down_body->points, true, lidar_end_time);
-            }
-            continue;                
-        }
-        int featsFromMapNum = ikdforest.total_size;
-        #else
         if(ikdtree.Root_Node == nullptr)
         {
             if(feats_down_body->points.size() > 5)
@@ -1199,19 +1143,6 @@ int main(int argc, char** argv)
             continue;
         }
         int featsFromMapNum = ikdtree.size();
-        #endif
-    #else
-        if(featsFromMap->points.empty())
-        {
-            downSizeFilterMap.setInputCloud(feats_down_body);
-        }
-        else
-        {
-            downSizeFilterMap.setInputCloud(featsFromMap);
-        }
-        downSizeFilterMap.filter(*featsFromMap);
-        int featsFromMapNum = featsFromMap->points.size();
-    #endif
         feats_down_size = feats_down_body->points.size();
         cout<<"[ LIO ]: Raw feature num: "<<feats_undistort->points.size()<<" downsamp num "<<feats_down_size<<" Map num: "<<featsFromMapNum<< "." << endl;
 
@@ -1287,31 +1218,17 @@ int main(int argc, char** argv)
                     /* transform to world frame */
                     pointBodyToWorld(&point_body, &point_world);
                     vector<float> pointSearchSqDis(NUM_MATCH_POINTS);
-                    #ifdef USE_ikdtree
-                        auto &points_near = Nearest_Points[i];
-                    #else
-                        auto &points_near = pointSearchInd_surf[i];
-                    #endif
+                    auto &points_near = Nearest_Points[i];
                     uint8_t search_flag = 0;  
                     double search_start = omp_get_wtime();
                     if (nearest_search_en)
                     {
                         /** Find the closest surfaces in the map **/
-                        #ifdef USE_ikdtree
-                            #ifdef USE_ikdforest
-                                search_flag = ikdforest.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis, first_lidar_time, 5);
-                            #else
-                                ikdtree.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
-                            #endif
-                        #else
-                            kdtreeSurfFromMap->nearestKSearch(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
-                        #endif
+                        ikdtree.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
+
 
                         point_selected_surf[i] = pointSearchSqDis[NUM_MATCH_POINTS - 1] > 5 ? false : true;
 
-                        #ifdef USE_ikdforest
-                            point_selected_surf[i] = point_selected_surf[i] && (search_flag == 0);
-                        #endif
                         kdtree_search_time += omp_get_wtime() - search_start;
                         kdtree_search_counter ++;                        
                     }
@@ -1524,9 +1441,7 @@ int main(int argc, char** argv)
         publish_effect_world(pubLaserCloudEffect);
         // publish_map(pubLaserCloudMap);
         publish_path(pubPath);
-        #ifdef DEPLOY
-        publish_mavros(mavros_pose_publisher);
-        #endif
+
 
         /*** Debug variables ***/
         frame_num ++;
@@ -1595,7 +1510,6 @@ int main(int argc, char** argv)
     fout_out.close();
     fout_pre.close();
 
-    #ifndef DEPLOY
     vector<double> t, s_vec, s_vec2, s_vec3, s_vec4, s_vec5, s_vec6, s_vec7;    
     FILE *fp2;
     string log_dir = root_dir + "/Log/fast_livo_time_log.csv";
@@ -1624,6 +1538,5 @@ int main(int argc, char** argv)
         // plt::pause(0.5);
         // plt::close();
     }
-    #endif
     return 0;
 }

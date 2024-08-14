@@ -24,7 +24,6 @@ using namespace Sophus;
 
 // #define DEBUG_PRINT
 #define USE_ikdtree
-// #define USE_ikdforest
 // #define USE_FOV_Checker
 
 #define print_line std::cout << __FILE__ << ", " << __LINE__ << std::endl;
