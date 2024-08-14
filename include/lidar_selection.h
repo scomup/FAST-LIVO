@@ -63,7 +63,6 @@ class LidarSelector {
     float CheckGoodPoints(cv::Mat img, V2D uv);
     void addFromSparseMap(cv::Mat img, PointCloudXYZI::Ptr pg);
     void addSparseMap(cv::Mat img, PointCloudXYZI::Ptr pg);
-    void FeatureAlignment(cv::Mat img);
     void set_extrinsic(const V3D &transl, const M3D &rot);
     void init();
     void getpatch(cv::Mat img, V3D pg, float* patch_tmp, int level);
@@ -88,13 +87,6 @@ class LidarSelector {
       const int pyramid_level,
       const int halfpatch_size,
       Matrix2d& A_cur_ref);
-    bool align2D(
-      const cv::Mat& cur_img,
-      float* ref_patch_with_border,
-      float* ref_patch,
-      const int n_iter,
-      Vector2d& cur_px_estimate,
-      int index);
     void AddPoint(PointPtr pt_new);
     int getBestSearchLevel(const Matrix2d& A_cur_ref, const int max_level);
     void display_keypatch(double time);

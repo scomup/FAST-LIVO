@@ -27,9 +27,6 @@
 #include <fast_livo/States.h>
 #include <geometry_msgs/Vector3.h>
 
-#ifdef USE_IKFOM
-#include "use-ikfom.hpp"
-#endif
 
 /// *************Preconfiguration
 
@@ -54,14 +51,9 @@ class ImuProcess
   void set_acc_cov_scale(const V3D &scaler);
   void set_gyr_bias_cov(const V3D &b_g);
   void set_acc_bias_cov(const V3D &b_a);
-  #ifdef USE_IKFOM
-  Eigen::Matrix<double, 12, 12> Q;
-  void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr pcl_un_);
-  #else
   void Process(const LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_);
   void Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_);
   void UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
-  #endif
 
   ros::NodeHandle nh;
   ofstream fout_imu;
@@ -74,14 +66,9 @@ class ImuProcess
   double first_lidar_time;
 
  private:
- #ifdef USE_IKFOM
-  void IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N);
-  void UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI &pcl_in_out);
-  #else
   void IMU_init(const MeasureGroup &meas, StatesGroup &state, int &N);
   void Forward(const MeasureGroup &meas, StatesGroup &state_inout, double pcl_beg_time, double end_time);
   void Backward(const LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
-  #endif
 
   PointCloudXYZI::Ptr cur_pcl_un_;
   sensor_msgs::ImuConstPtr last_imu_;
