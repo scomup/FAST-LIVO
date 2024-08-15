@@ -644,6 +644,10 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
         M3D p_hat;
         int i;
 
+        // ref: paper (5)
+        // res(T) = I(uv) - patch
+        // uv = pi(pf) // pi: the pinhole camera model, pf: point in frame
+        // pf = Rcw * pw + tcw
         for (i=0; i<sub_sparse_map->index.size(); i++) 
         {
             patch_error = 0.0;
@@ -656,16 +660,15 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
             if(pt==nullptr) continue;
 
             V3D pf = Rcw * pt->pos_ + Pcw;
-            pc = cam->world2cam(pf);
-            // if((level==2 && iteration==0) || (level==1 && iteration==0) || level==0)
+            uv = cam->world2cam(pf);
             {
                 dpi(pf, Jdpi);
                 p_hat << SKEW_SYM_MATRX(pf);
             }
-            const float u_ref = pc[0];
-            const float v_ref = pc[1];
-            const int u_ref_i = floorf(pc[0]/scale)*scale; 
-            const int v_ref_i = floorf(pc[1]/scale)*scale;
+            const float u_ref = uv[0];
+            const float v_ref = uv[1];
+            const int u_ref_i = floorf(uv[0]/scale)*scale; 
+            const int v_ref_i = floorf(uv[1]/scale)*scale;
             const float subpix_u_ref = (u_ref-u_ref_i)/scale;
             const float subpix_v_ref = (v_ref-v_ref_i)/scale;
             const float w_ref_tl = (1.0-subpix_u_ref) * (1.0-subpix_v_ref);
@@ -679,29 +682,42 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
                 uint8_t* img_ptr = (uint8_t*) img.data + (v_ref_i+x*scale-patch_size_half*scale)*width + u_ref_i-patch_size_half*scale;
                 for (int y=0; y<patch_size; ++y, img_ptr+=scale) 
                 {
-                    // if((level==2 && iteration==0) || (level==1 && iteration==0) || level==0)
-                    //{
-                    float du = 0.5f * ((w_ref_tl*img_ptr[scale] + w_ref_tr*img_ptr[scale*2] + w_ref_bl*img_ptr[scale*width+scale] + w_ref_br*img_ptr[scale*width+scale*2])
-                                -(w_ref_tl*img_ptr[-scale] + w_ref_tr*img_ptr[0] + w_ref_bl*img_ptr[scale*width-scale] + w_ref_br*img_ptr[scale*width]));
-                    float dv = 0.5f * ((w_ref_tl*img_ptr[scale*width] + w_ref_tr*img_ptr[scale+scale*width] + w_ref_bl*img_ptr[width*scale*2] + w_ref_br*img_ptr[width*scale*2+scale])
-                                -(w_ref_tl*img_ptr[-scale*width] + w_ref_tr*img_ptr[-scale*width+scale] + w_ref_bl*img_ptr[0] + w_ref_br*img_ptr[scale]));
+                    float du = 0.5f * ((w_ref_tl * img_ptr[scale] + 
+                                        w_ref_tr * img_ptr[scale * 2] + 
+                                        w_ref_bl * img_ptr[scale * width + scale] + 
+                                        w_ref_br * img_ptr[scale * width + scale * 2]) - 
+                                        (w_ref_tl * img_ptr[-scale] + w_ref_tr * img_ptr[0] + 
+                                        w_ref_bl * img_ptr[scale * width - scale] + 
+                                        w_ref_br * img_ptr[scale * width]));
+                    float dv = 0.5f * ((w_ref_tl * img_ptr[scale * width] + 
+                                        w_ref_tr * img_ptr[scale + scale * width] + 
+                                        w_ref_bl * img_ptr[width * scale * 2] + 
+                                        w_ref_br * img_ptr[width * scale * 2 + scale]) - 
+                                        (w_ref_tl * img_ptr[-scale * width] + 
+                                        w_ref_tr * img_ptr[-scale * width + scale] + 
+                                        w_ref_bl * img_ptr[0] + w_ref_br * img_ptr[scale]));
+
+                    // Jimg is the Jacobian matrix representing the derivative of 
+                    // the residual error with respect to the image coordinates
                     Jimg << du, dv;
                     Jimg = Jimg * (1.0/scale);
+                    // Jdphi is the Jacobian matrix representing the derivative of 
+                    // the residual error with respect to the rotational components of state
                     Jdphi = Jimg * Jdpi * p_hat;
                     Jdp = -Jimg * Jdpi;
                     JdR = Jdphi * Jdphi_dR + Jdp * Jdp_dR;
                     Jdt = Jdp * Jdp_dt;
-                    //}
-                    double res = w_ref_tl*img_ptr[0] + w_ref_tr*img_ptr[scale] + w_ref_bl*img_ptr[scale*width] + w_ref_br*img_ptr[scale*width+scale]  - P[patch_size_total*level + x*patch_size+y];
-                    z(i*patch_size_total+x*patch_size+y) = res;
-                    // float weight = 1.0;
-                    // if(iteration > 0)
-                    //     weight = weight_function_->value(res/weight_scale_); 
-                    // R(i*patch_size_total+x*patch_size+y) = weight;       
+                    
+                    double res = w_ref_tl * img_ptr[0] +  // top-left
+                                 w_ref_tr * img_ptr[scale] + // top-right
+                                 w_ref_bl * img_ptr[scale * width] + // bottom-left
+                                 w_ref_br * img_ptr[scale * width + scale] - // bottom-right
+                                 P[patch_size_total * level + x * patch_size + y];
+                    z(i * patch_size_total + x * patch_size + y) = res;
+
                     patch_error +=  res*res;
                     n_meas_++;
-                    // H.block<1,6>(i*patch_size_total+x*patch_size+y,0) << JdR*weight, Jdt*weight;
-                    // if((level==2 && iteration==0) || (level==1 && iteration==0) || level==0)
+
                     H_sub.block<1,6>(i*patch_size_total+x*patch_size+y,0) << JdR, Jdt;
                 }
             }  
