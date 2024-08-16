@@ -25,7 +25,7 @@ class LidarSelector {
     StatesGroup* state_;
     StatesGroup* state_propagat;
     M3D Rli, Rci, Rcw, Jdphi_dR, Jdp_dt, Jdp_dR;
-    V3D Pli, Pci, Pcw;
+    V3D Pli, tci, tcw;
     int* align_flag;
     int* grid_num;
     int* map_index;

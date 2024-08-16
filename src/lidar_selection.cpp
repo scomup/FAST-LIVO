@@ -14,8 +14,8 @@ LidarSelector::LidarSelector(const int gridsize, SparseMap* sparsemap ): grid_si
     Jdp_dt = M3D::Identity();
     Jdp_dR = M3D::Identity();
     Pli = V3D::Zero();
-    Pci = V3D::Zero();
-    Pcw = V3D::Zero();
+    tci = V3D::Zero();
+    tcw = V3D::Zero();
     width = 800;
     height = 600;
 }
@@ -44,11 +44,11 @@ void LidarSelector::init()
 {
     sub_sparse_map = new SubSparseMap;
     Rci = sparse_map->Rcl * Rli;
-    Pci= sparse_map->Rcl*Pli + sparse_map->Pcl;
+    tci = sparse_map->Rcl*Pli + sparse_map->Pcl;
     M3D Ric;
     V3D Pic;
     Jdphi_dR = Rci;
-    Pic = -Rci.transpose() * Pci;
+    Pic = -Rci.transpose() * tci;
     M3D tmp;
     tmp << SKEW_SYM_MATRX(Pic);
     Jdp_dR = -Rci * tmp;
@@ -605,7 +605,7 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
     StatesGroup old_state = (*state_);
     V2D pc; 
     MD(1,2) Jimg;
-    MD(2,3) Jdpi;
+    MD(2,3) du_dpc;
     MD(1,3) Jdphi, Jdp, JdR, Jdt;
     VectorXd z;
     // VectorXd R;
@@ -636,18 +636,15 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
         propa_error = 0.0;
         n_meas_ =0;
         M3D Rwi(state_->rot_end);
-        V3D Pwi(state_->pos_end);
+        V3D twi(state_->pos_end);
         Rcw = Rci * Rwi.transpose();
-        Pcw = -Rci*Rwi.transpose()*Pwi + Pci;
+        tcw = -Rci*Rwi.transpose()*twi + tci;
         Jdp_dt = Rci * Rwi.transpose();
         
         M3D p_hat;
         int i;
 
         // ref: paper (5)
-        // res(T) = I(uv) - patch
-        // uv = pi(pf) // pi: the pinhole camera model, pf: point in frame
-        // pf = Rcw * pw + tcw
         for (i=0; i<sub_sparse_map->index.size(); i++) 
         {
             patch_error = 0.0;
@@ -659,10 +656,10 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
 
             if(pt==nullptr) continue;
 
-            V3D pf = Rcw * pt->pos_ + Pcw;
-            uv = cam->world2cam(pf);
+            V3D pf = Rcw * pt->pos_ + tcw;
+            V2D uv = cam->world2cam(pf);
             {
-                dpi(pf, Jdpi);
+                dpi(pf, du_dpc);
                 p_hat << SKEW_SYM_MATRX(pf);
             }
             const float u_ref = uv[0];
@@ -703,11 +700,22 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
                     Jimg = Jimg * (1.0/scale);
                     // Jdphi is the Jacobian matrix representing the derivative of 
                     // the residual error with respect to the rotational components of state
-                    Jdphi = Jimg * Jdpi * p_hat;
-                    Jdp = -Jimg * Jdpi;
-                    JdR = Jdphi * Jdphi_dR + Jdp * Jdp_dR;
-                    Jdt = Jdp * Jdp_dt;
-                    
+                    // Jdphi = Jimg * du_dpc * p_hat;
+                    // Jdp = -Jimg * du_dpc;
+                    // JdR = Jimg * du_dpc * p_hat * Jdphi_dR
+                    //       -Jimg * du_dpc * Jdp_dR;
+                    // Jdt = -Jimg * du_dpc * Jdp_dt;
+
+                    M3D dpc_drcw = Rcw * skew(-pt->pos_);
+                    M3D dpc_dtcw = M3D::Identity();
+                    M3D dtcw_drwi = -Rci * skew(Rwi.transpose() * twi);
+                    M3D dtcw_dtwi = -Rci * Rwi.transpose();
+                    M3D drcw_drwi = -Rwi; 
+
+                    JdR = Jimg * du_dpc * dpc_drcw * drcw_drwi + 
+                          Jimg * du_dpc * dpc_dtcw * dtcw_drwi;
+                    Jdt = Jimg * du_dpc * dpc_dtcw * dtcw_dtwi;
+
                     double res = w_ref_tl * img_ptr[0] +  // top-left
                                  w_ref_tr * img_ptr[scale] + // top-right
                                  w_ref_bl * img_ptr[scale * width] + // bottom-left
@@ -778,10 +786,10 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
 void LidarSelector::updateFrameState(StatesGroup state_)
 {
     M3D Rwi(state_.rot_end);
-    V3D Pwi(state_.pos_end);
+    V3D twi(state_.pos_end);
     Rcw = Rci * Rwi.transpose();
-    Pcw = -Rci*Rwi.transpose()*Pwi + Pci;
-    new_frame_->T_f_w_ = SE3(Rcw, Pcw);
+    tcw = -Rci*Rwi.transpose()*twi + tci;
+    new_frame_->T_f_w_ = SE3(Rcw, tcw);
 }
 
 void LidarSelector::addObservation(cv::Mat img)
