@@ -604,8 +604,8 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
     if (total_points==0) return 0.;
     StatesGroup old_state = (*state_);
     V2D pc; 
-    MD(1,2) Jimg;
-    MD(2,3) Jdpi;
+    MD(1,2) dres_duv;
+    MD(2,3) duv_dpc;
     MD(1,3) Jdphi, Jdp, JdR, Jdt;
     VectorXd z;
     // VectorXd R;
@@ -642,6 +642,7 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
         Jdp_dt = Rci * Rwi.transpose();
         
         M3D p_hat;
+        M3D dpc_dRcw;
         int i;
 
         // ref: paper (5)
@@ -660,10 +661,11 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
             if(pt==nullptr) continue;
 
             V3D pf = Rcw * pt->pos_ + Pcw;
-            uv = cam->world2cam(pf);
+            V2D uv = cam->world2cam(pf);
             {
-                dpi(pf, Jdpi);
+                dpi(pf, duv_dpc);
                 p_hat << SKEW_SYM_MATRX(pf);
+                dpc_dRcw = Rcw * SKEW_SYM_MATRX(-pf);
             }
             const float u_ref = uv[0];
             const float v_ref = uv[1];
@@ -697,16 +699,16 @@ float LidarSelector::UpdateState(cv::Mat img, float total_residual, int level)
                                         w_ref_tr * img_ptr[-scale * width + scale] + 
                                         w_ref_bl * img_ptr[0] + w_ref_br * img_ptr[scale]));
 
-                    // Jimg is the Jacobian matrix representing the derivative of 
+                    // dres_duv is the Jacobian matrix representing the derivative of 
                     // the residual error with respect to the image coordinates
-                    Jimg << du, dv;
-                    Jimg = Jimg * (1.0/scale);
+                    dres_duv << du, dv;
+                    dres_duv = dres_duv * (1.0/scale);
                     // Jdphi is the Jacobian matrix representing the derivative of 
                     // the residual error with respect to the rotational components of state
-                    Jdphi = Jimg * Jdpi * p_hat;
-                    Jdp = -Jimg * Jdpi;
-                    JdR = Jdphi * Jdphi_dR + Jdp * Jdp_dR;
-                    Jdt = Jdp * Jdp_dt;
+                    //Jdphi = dres_duv * duv_dpc * Rcw * p_hat;
+                    //Jdp = -dres_duv * duv_dpc;
+                    JdR = dres_duv * duv_dpc * dpc_dRcw + Jdp * Jdp_dR;
+                    Jdt = Jdp * Rcw * Jdp_dt;
                     
                     double res = w_ref_tl * img_ptr[0] +  // top-left
                                  w_ref_tr * img_ptr[scale] + // top-right
